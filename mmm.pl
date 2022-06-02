@@ -69,6 +69,7 @@ my $TV2 = "v31";
 sub propagate {
     my $i = shift;
     my $j = shift;
+    my $f = shift;
     my $ij = ($i + $j) % $nreg;
     my $ij1 = ($i + $j + 1) % $nreg;
     my $ABVIJ = "v@{[$ABVN + $ij]}";
@@ -82,11 +83,22 @@ sub propagate {
     vsrl.vi $ABVIJ, $ABVIJ, $word
 ___
     if ($j == $nreg - 1) {
-        $code .= <<___;
     # carry of AB_s-1 does not add to AB_0
+        if ($f == 1) {
+        $code .= <<___;
+    # for final round, instead of slide1up, add then slide1down
+    # we can just slide1down and add
+    # generally slide is expensive
+    vslide1down.vx $TV2, $ABVIJ1, zero
+    vadd.vv        $TV2, $TV2, $TV
+    vmv.v.v        $ABVIJ1, $TV2
+___
+        } else {
+        $code .= <<___;
     vslide1up.vx $TV2, $TV, zero
     vadd.vv $ABVIJ1, $ABVIJ1, $TV2
 ___
+        }
     } else {
         $code .= <<___;
     vadd.vv $ABVIJ1, $ABVIJ1, $TV
@@ -140,7 +152,7 @@ ___
 
     # propagate carry for nreg round
     for (my $j = 0; $j != $nreg; $j++) {
-        propagate($i, $j);
+        propagate($i, $j, 0);
     }
 
     # AB = q*P + AB
@@ -150,7 +162,7 @@ ___
     vmv.x.s $T0, $ABVI
     mul     $T0, $T0, $MU
     # mod 2 ** $word
-    # !!!! important: here we assume SEW = 32
+    # !!!! important: here we assume SEW = 32 and XLEN = 64
     sllw    $T0, $T0, $word
     srlw    $T0, $T0, $word
 ___
@@ -164,21 +176,17 @@ ___
     }
 
     # propagate carry for nreg round
-    for (my $j = 0; $j != $nreg; $j++) {
-        propagate($i, $j);
+    for (my $j = 0; $j != $nreg - 1; $j++) {
+        propagate($i, $j, 0);
     }
-
-    $code .= <<___;
-    vslide1down.vx $TV, $ABVI, zero
-    vmv.v.v        $ABVI, $TV
-___
+    propagate($i, $nreg - 1, 1);
 }
 
 # propagate carry for niter round
 for (my $k = $niter + 1; $k <= 2 * $niter + 1; $k++) {
     my $i = $niter + 1;
     my $j = ($k - $i) % $nreg;
-    propagate($i, $j);
+    propagate($i, $j, 0);
 }
 
 # restore order of AB: move AB[i] to A[0]

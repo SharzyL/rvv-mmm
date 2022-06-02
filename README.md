@@ -23,10 +23,12 @@ perl mmm.pl > mmm.S
 # clang 14 is suggested
 clang --target=riscv64 -march=rv64gcv -static -o mmm mmm.S mmm_main.c
 spike --isa=rv64gcv --varch=vlen:128,elen:32 pk mmm
+# or you can use make run for all these above
 ```
 
 We have a reference implementation of the above paper in Python, just try the following command and you will find the answer as above
 
 ```bash
 python mmm.py
+# or make ref
 ```
