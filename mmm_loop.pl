@@ -53,7 +53,7 @@ my $nelement = $nreg * $way; # number of elements should be in A, B, P and AB
 
 my ($N,$MU,$P,$A,$B,$AB) = ("a0", "a1", "a2", "a3", "a4", "a5");
 
-my ($T0) = ("t0"); # happy that it is caller-saved
+my ($T0, $LOOP) = ("t0", "t1"); # happy that it is caller-saved
 
 my ($PVN, $AVN, $ABVN) = (0, 10, 20);
 my ($PV, $AV, $ABV) = ("v$PVN", "v$AVN", "v$ABVN");
@@ -67,20 +67,18 @@ my $TV2 = "v31";
 ################################################################################
 
 sub propagate {
-    my $i = shift;
     my $j = shift;
     my $f = shift;
-    my $ij = ($i + $j) % $nreg;
-    my $ij1 = ($i + $j + 1) % $nreg;
-    my $ABVIJ = "v@{[$ABVN + $ij]}";
-    my $ABVIJ1 = "v@{[$ABVN + $ij1]}";
+    my $j1 = ($j + 1) % $nreg;
+    my $ABVJ = "v@{[$ABVN + $j]}";
+    my $ABVJ1 = "v@{[$ABVN + $j1]}";
     $code .= <<___;
     # save carry in TV
-    vsrl.vi $TV, $ABVIJ, $word
+    vsrl.vi $TV, $ABVJ, $word
     # mod 2 ** $word
     # !!!!! important: here we assume elen = 2 * word
-    vsll.vi $ABVIJ, $ABVIJ, $word
-    vsrl.vi $ABVIJ, $ABVIJ, $word
+    vsll.vi $ABVJ, $ABVJ, $word
+    vsrl.vi $ABVJ, $ABVJ, $word
 ___
     if ($j == $nreg - 1) {
     # carry of AB_s-1 does not add to AB_0
@@ -90,19 +88,30 @@ ___
     # instead of slide1up, add then slide1down
     # we can just slide1down and add
     # generally slide is expensive
-    vslide1down.vx $TV2, $ABVIJ1, zero
+    vslide1down.vx $TV2, $ABVJ1, zero
     vadd.vv        $TV2, $TV2, $TV
-    vmv.v.v        $ABVIJ1, $TV2
+___
+            # move AB_1 to AB_0, AB_0 (now AB_s in TV2) to AB_s-1 
+            for (my $k = 0; $k != $nreg - 1; $k++) {
+                my $ABVK = "v@{[$ABVN + $k]}";
+                my $ABVK1 = "v@{[$ABVN + $k + 1]}";
+                $code .= <<___;
+    vmv.v.v        $ABVK, $ABVK1
+___
+            }
+            my $ABVF = "v@{[$ABVN + $nreg - 1]}";
+            $code .= <<___;
+    vmv.v.v        $ABVF, $TV2
 ___
         } else {
             $code .= <<___;
     vslide1up.vx $TV2, $TV, zero
-    vadd.vv $ABVIJ1, $ABVIJ1, $TV2
+    vadd.vv $ABVJ1, $ABVJ1, $TV2
 ___
         }
     } else {
         $code .= <<___;
-    vadd.vv $ABVIJ1, $ABVIJ1, $TV
+    vadd.vv $ABVJ1, $ABVJ1, $TV
 ___
     }
 }
@@ -136,74 +145,67 @@ for (my $j = 0; $j != $nreg; $j++) {
 ___
 }
 
-for (my $i = 0; $i <= $niter; $i++) {
+$code .= <<___;
+    # start loop of niter + 1 times
+    li  $LOOP,0
+1:
     # AB = B_i*A + AB
-    $code .= <<___;
     # !!!!!! important: lw here assumes SEW = 32
-    lw $T0, @{[$i * 4]}($B)
+    lw $T0, 0($B)
+    addi $B, $B, 4 # advance B by a SEW
 ___
-    for (my $j = 0; $j != $nreg; $j++) {
-        my $ij = ($i + $j) % $nreg;
-        my $ABVIJ = "v@{[$ABVN + $ij]}";
-        my $AVJ = "v@{[$AVN + $j]}";
-        $code .= <<___;
-        vmacc.vx $ABVIJ, $T0, $AVJ
-___
-    }
 
-    # propagate carry for nreg round
-    for (my $j = 0; $j != $nreg; $j++) {
-        propagate($i, $j, 0);
-    }
-
-    # AB = q*P + AB
-    my $is = $i % $nreg;
-    my $ABVI = "v@{[$ABVN + $is]}";
+for (my $j = 0; $j != $nreg; $j++) {
+    my $ABVJ = "v@{[$ABVN + $j]}";
+    my $AVJ = "v@{[$AVN + $j]}";
     $code .= <<___;
-    vmv.x.s $T0, $ABVI
+    vmacc.vx $ABVJ, $T0, $AVJ
+___
+}
+
+# propagate carry for nreg round
+for (my $j = 0; $j != $nreg; $j++) {
+    propagate($j, 0);
+}
+
+# AB = q*P + AB
+$code .= <<___;
+    vmv.x.s $T0, $ABV
     mul     $T0, $T0, $MU
     # mod 2 ** $word
     # !!!! important: here we assume SEW = 32 and XLEN = 64
     sllw    $T0, $T0, $word
     srlw    $T0, $T0, $word
 ___
-    for (my $j = 0; $j != $nreg; $j++) {
-        my $ij = ($i + $j) % $nreg;
-        my $ABVIJ = "v@{[$ABVN + $ij]}";
-        my $PVJ = "v@{[$PVN + $j]}";
-        $code .= <<___;
-        vmacc.vx $ABVIJ, $T0, $PVJ
+for (my $j = 0; $j != $nreg; $j++) {
+    my $ABVJ = "v@{[$ABVN + $j]}";
+    my $PVJ = "v@{[$PVN + $j]}";
+    $code .= <<___;
+    vmacc.vx $ABVJ, $T0, $PVJ
 ___
     }
 
-    # propagate carry for nreg round
-    for (my $j = 0; $j != $nreg - 1; $j++) {
-        propagate($i, $j, 0);
-    }
-    propagate($i, $nreg - 1, 1);
+# propagate carry for nreg round
+for (my $j = 0; $j != $nreg - 1; $j++) {
+    propagate($j, 0);
 }
+# propagate final round and move
+propagate($nreg - 1, 1);
+
+$code .= <<___;
+    addi  $LOOP,$LOOP,1
+    li    $T0,@{[$niter + 1]}
+    bne   $LOOP,$T0,1b
+___
 
 # propagate carry for niter round
 for (my $k = $niter + 1; $k <= 2 * $niter + 1; $k++) {
-    my $i = $niter + 1;
-    my $j = ($k - $i) % $nreg;
-    propagate($i, $j, 0);
-}
-
-# restore order of AB: move AB[i] to A[0]
-# AB[i+1] to A[1], etc..
-my $is = ($niter+1) % $nreg;
-for (my $j = 0; $j != $nreg; $j++) {
-    my $AVJ = "v@{[$AVN + $j]}";
-    my $ji = ($j + $is) % $nreg;
-    my $ABVJI = "v@{[$ABVN + $ji]}";
-    $code .= <<___;
-    vmv.v.v $AVJ, $ABVJI
-___
+    my $j = ($k - ($niter + 1)) % $nreg;
+    propagate($j, 0);
 }
 
 $code .= <<___;
-    vsseg${nreg}e$sew.v $AV, ($AB)
+    vsseg${nreg}e$sew.v $ABV, ($AB)
     ret
 ___
 

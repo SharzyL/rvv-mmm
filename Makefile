@@ -1,7 +1,7 @@
 .PHONY: all
 all: mmm
 
-mmm.S: mmm.pl
+mmm.S: mmm_loop.pl
 	perl $^ > $@
 
 mmm: mmm.S mmm_main.c

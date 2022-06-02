@@ -8,9 +8,9 @@ This is an implementation of [Montgomery Multiplication on the Cell](https://lin
 
 You can see all the parameters in `mmm.pl`. More document on this will be added.
 
-Currently MMM is fully unrolled, and we dont have a stack now. The only memory access is the first two loads and last one store.
+`mmm.pl` is fully unrolled, and we dont need stack in this implementation. The only memory access is the first two loads and last one store. But the code size is a concern. when VLEN=2048 and BN=4096 for RSA4096, the code size is 65KiB.
 
-We will add a version with loops thus reducing code size (when VLEN=2048 and BN=4096 for RSA4096, the code size is 65K), but then there are data move between vregs.
+`mmm_loop.pl` is a version with loops thus it reduces code size, but then there is overhead on move data between vregs (`vmv.v.v`).
 
 We will add a version with stack capable of bigger BN with limited VLEN, but since there are a lot of saving/restoring BN to/from the stack, the efficiency will be a problem.
 
@@ -19,7 +19,7 @@ We will add a version with stack capable of bigger BN with limited VLEN, but sin
 To run the RVV program, you can try
 
 ```bash
-perl mmm.pl > mmm.S
+perl mmm_loop.pl > mmm.S
 # clang 14 is suggested
 clang --target=riscv64 -march=rv64gcv -static -o mmm mmm.S mmm_main.c
 spike --isa=rv64gcv --varch=vlen:128,elen:32 pk mmm
