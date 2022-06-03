@@ -198,13 +198,22 @@ $code .= <<___;
     bne   $LOOP,$T0,1b
 ___
 
-# propagate carry for niter round
-for (my $k = $niter + 1; $k <= 2 * $niter + 1; $k++) {
-    my $j = ($k - ($niter + 1)) % $nreg;
+# propagate carry for nreg*way (bigger than niter) round
+# original algorithm propagates for niter round
+$code .= <<___;
+    # start loop of niter + 1 times
+    li  $LOOP,0
+1:
+___
+# propagate carry for nreg round
+for (my $j = 0; $j != $nreg; $j++) {
     propagate($j, 0);
 }
-
 $code .= <<___;
+    addi  $LOOP,$LOOP,1
+    li    $T0,$way
+    bne   $LOOP,$T0,1b
+
     vsseg${nreg}e$sew.v $ABV, ($AB)
     ret
 ___
