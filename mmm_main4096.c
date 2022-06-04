@@ -21,12 +21,11 @@ const uint32_t mu = 0xf9b3;
 // 32 = 2 * word_bits
 // mu is of 16 bits
 // R is 2 ** (max_bits + word_bits)
-// n = 16
-//                     a0                 a1                  a2                a3                 a4                    a5
-void mmm_rvv16(uint64_t n, const uint32_t mu, const uint32_t* p, const uint32_t* a, const uint32_t* b, const uint32_t* abr1);
+#define mmm bn_mul_mont_rv64imv_zvl128b_sew32_bn4096_nelement260
+void mmm(uint32_t* r, const uint32_t* a, const uint32_t* b, const uint32_t* p, const uint32_t mu);
 
 int main() {
-  mmm_rvv16(260, mu, p, a, b, abr1);
+  mmm(abr1, a, b, p, mu);
   for(int i = 0; i != 260; ++i) {
     printf("%04X ", abr1[i]);
   }

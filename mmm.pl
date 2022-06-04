@@ -51,7 +51,7 @@ my $nelement = $nreg * $way; # number of elements should be in A, B, P and AB
 # Register assignment
 ################################################################################
 
-my ($N,$MU,$P,$A,$B,$AB) = ("a0", "a1", "a2", "a3", "a4", "a5");
+my ($AB, $A, $B, $P, $MU) = ("a0", "a1", "a2", "a3", "a4");
 
 my ($T0) = ("t0"); # happy that it is caller-saved
 
@@ -113,12 +113,12 @@ ___
 $code .= <<___;
 .text
 .balign 16
-.globl mmm_rvv${word}
-.type mmm_rvv${word},\@function
+.globl bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement}
+.type bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement},\@function
 # assume VLEN >= $vl, BN = $bn, SEW = $word * 2 = $sew
 # we only support LMUL = 1 for now
 # P, A, B, AB should have $nelement elements
-mmm_rvv${word}:
+bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement}:
     # quite SIMD
     li  $T0, $way # in case way > 31
     vsetvli zero, $T0, e$sew, m$lmul, ta, ma
