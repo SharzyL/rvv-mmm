@@ -76,13 +76,13 @@ sub propagate {
     # save carry in TV
     vsrl.vi $TV, $ABVJ, $word
     # mod 2 ** $word
-    # !!!!! important: here we assume elen = 2 * word
-    vsll.vi $ABVJ, $ABVJ, $word
-    vsrl.vi $ABVJ, $ABVJ, $word
+    # TV2 the mask until after j == nreg - 1
+    vand.vv $ABVJ, $ABVJ, $TV2
 ___
     if ($j == $nreg - 1) {
     # carry of AB_s-1 does not add to AB_0
         $code .= <<___;
+    # changed TV2 here! re-init TV2 when the loop start again
     vslide1up.vx $TV2, $TV, zero
     vadd.vv $ABVJ1, $ABVJ1, $TV2
 ___
@@ -118,6 +118,11 @@ $code .= <<___;
     # start loop of niter + 1 times
     li  $LOOP2,0
 10:
+    # mask
+    # T0 reused at the end
+    # set TV2 for every loop
+    li  $T0,@{[2 ** $word - 1]}
+    vmv.v.x $TV2,$T0
 ___
 # propagate carry for nreg round
 for (my $j = 0; $j != $nreg; $j++) {
