@@ -181,7 +181,7 @@ for i in range(n + 1, 2 * n + 1 + 1):
     C = row_carry(U[j])
     U[j] = row_module_w_2(U[j])
     # special for s-1 (cross boundary)
-    if d != 0 and d % (s - 1) == 0:
+    if d % s == s - 1:
         # shift 32 higher
         C = row_right_shift_1(C)
     U[k] = row_plus(U[k], C)

@@ -96,8 +96,8 @@ def column_zero():
 
 # input
 p = 2 ** 255 - 19
-a = 0xFFFFFFFF
-b = 0xFFFFFFFF
+a = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffd9ffed
+b = a
 
 # for exporing p to mmm_main.C
 #ps = hex(p)[2:]
@@ -182,7 +182,7 @@ for i in range(n + 1, 2 * n + 1 + 1):
     C = row_carry(U[j])
     U[j] = row_module_w_2(U[j])
     # special for s-1 (cross boundary)
-    if d != 0 and d % (s - 1) == 0:
+    if d % s == s - 1:
         # shift 32 higher
         C = row_right_shift_1(C)
     U[k] = row_plus(U[k], C)
@@ -192,5 +192,8 @@ Z = column_zero()
 for j in range(0, s):
     Z[j] = U[(n + j + 1) % s]
 
-print("computed", hex(column_scalar(Z)))
+z = column_scalar(Z)
+print("computed", hex(z))
+if z > p:
+    print("in Z/PZ ", hex(z - p))
 print("referenc", hex((a * b * Rinv) % p))
