@@ -53,7 +53,7 @@ my $nelement = $nreg * $way; # number of elements should be in A, B, P and AB
 
 my ($AB, $A, $B, $P, $MU) = ("a0", "a1", "a2", "a3", "a4");
 
-my ($T0, $LOOP) = ("t0", "t1"); # happy that it is caller-saved
+my ($T0, $LOOP, $LOOP2) = ("t0", "t1", "t2"); # happy that it is caller-saved
 
 my ($PVN, $AVN, $ABVN) = (0, 10, 20);
 my ($PV, $AV, $ABV) = ("v$PVN", "v$AVN", "v$ABVN");
@@ -82,38 +82,52 @@ sub propagate {
 ___
     if ($j == $nreg - 1) {
     # carry of AB_s-1 does not add to AB_0
-        if ($f == 1) {
-            $code .= <<___;
-    # for final propagate of an \$i round
-    # instead of slide1up, add then slide1down
-    # we can just slide1down and add
-    # generally slide is expensive
-    vslide1down.vx $TV2, $ABVJ1, zero
-    vadd.vv        $TV2, $TV2, $TV
-___
-            # move AB_1 to AB_0, AB_0 (now AB_s in TV2) to AB_s-1 
-            for (my $k = 0; $k != $nreg - 1; $k++) {
-                my $ABVK = "v@{[$ABVN + $k]}";
-                my $ABVK1 = "v@{[$ABVN + $k + 1]}";
-                $code .= <<___;
-    vmv.v.v        $ABVK, $ABVK1
-___
-            }
-            my $ABVF = "v@{[$ABVN + $nreg - 1]}";
-            $code .= <<___;
-    vmv.v.v        $ABVF, $TV2
-___
-        } else {
-            $code .= <<___;
+        $code .= <<___;
     vslide1up.vx $TV2, $TV, zero
     vadd.vv $ABVJ1, $ABVJ1, $TV2
 ___
-        }
     } else {
         $code .= <<___;
     vadd.vv $ABVJ1, $ABVJ1, $TV
 ___
     }
+}
+
+sub move {
+    $code .= <<___;
+    vslide1down.vx $TV2, $ABV, zero
+___
+# move AB_1 to AB_0, AB_0 (now AB_s in TV2) to AB_s-1
+    for (my $k = 0; $k != $nreg - 1; $k++) {
+        my $ABVK = "v@{[$ABVN + $k]}";
+        my $ABVK1 = "v@{[$ABVN + $k + 1]}";
+        $code .= <<___;
+    vmv.v.v        $ABVK, $ABVK1
+___
+    }
+    my $ABVF = "v@{[$ABVN + $nreg - 1]}";
+    $code .= <<___;
+    vmv.v.v        $ABVF, $TV2
+___
+}
+
+sub propagate_niter {
+# propagate carry for nreg*way (bigger than niter) round
+# original algorithm propagates for niter round
+$code .= <<___;
+    # start loop of niter + 1 times
+    li  $LOOP2,0
+10:
+___
+# propagate carry for nreg round
+for (my $j = 0; $j != $nreg; $j++) {
+    propagate($j);
+}
+$code .= <<___;
+    addi  $LOOP2,$LOOP2,1
+    li    $T0,$way
+    bne   $LOOP2,$T0,10b
+___
 }
 
 ################################################################################
@@ -163,10 +177,13 @@ for (my $j = 0; $j != $nreg; $j++) {
 ___
 }
 
-# propagate carry for nreg round
-for (my $j = 0; $j != $nreg; $j++) {
-    propagate($j, 0);
-}
+## NOT TRUE: propagate carry for nreg round
+# nreg round is not enough, should do it for n
+#for (my $j = 0; $j != $nreg; $j++) {
+#    propagate($j, 0);
+#}
+# fully propagte
+propagate_niter();
 
 # AB = q*P + AB
 $code .= <<___;
@@ -185,33 +202,18 @@ for (my $j = 0; $j != $nreg; $j++) {
 ___
     }
 
-# propagate carry for nreg round
-for (my $j = 0; $j != $nreg - 1; $j++) {
-    propagate($j, 0);
-}
-# propagate final round and move
-propagate($nreg - 1, 1);
+## NOT TRUE: propagate carry for nreg round
+#for (my $j = 0; $j != $nreg - 1; $j++) {
+#    propagate($j, 0);
+#}
+## propagate final round and move
+#propagate($nreg - 1, 1);
+propagate_niter();
+move();
 
 $code .= <<___;
     addi  $LOOP,$LOOP,1
     li    $T0,@{[$niter + 1]}
-    bne   $LOOP,$T0,1b
-___
-
-# propagate carry for nreg*way (bigger than niter) round
-# original algorithm propagates for niter round
-$code .= <<___;
-    # start loop of niter + 1 times
-    li  $LOOP,0
-1:
-___
-# propagate carry for nreg round
-for (my $j = 0; $j != $nreg; $j++) {
-    propagate($j, 0);
-}
-$code .= <<___;
-    addi  $LOOP,$LOOP,1
-    li    $T0,$way
     bne   $LOOP,$T0,1b
 
     vsseg${nreg}e$sew.v $ABV, ($AB)
