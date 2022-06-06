@@ -186,195 +186,7 @@ $code .= <<___;
 ___
 }
 
-################################################################################
-# function
-################################################################################
-$code .= <<___;
-.text
-.balign 16
-.globl bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement}
-.type bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement},\@function
-# assume VLEN >= $vl, BN = $bn, SEW = $word * 2 = $sew
-# we only support LMUL = 1 for now
-# P, A, B, AB should have $nelement elements
-bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement}:
-    # quite SIMD
-    li  $T0, $way # in case way > 31
-    vsetvli zero, $T0, e$sew, m$lmul, ta, ma
-    # stride
-    li  $STRIDE, @{[$ntotalreg * $sew / 8]}
-___
-
-$code .= <<___;
-    # start loop of niter + 1 times
-    li  $LOOP,0
-1:
-    # AB = B_i*A + AB
-    # !!!!!! important: lw here assumes SEW = 32
-    # T0 is used in vmacc, do not use for temp now!
-    lw  $T0, 0($B)
-    addi $B, $B, 4 # advance B by a SEW
-
-    # carry for ABV_0
-    vmv.v.i $TV,0 
-    # loop variable
-    li  $LOOP2,0
-___
-# start loop of ngroup - 1 times
-if ($ngroup != 1) {
-    $code .= <<___;
-2:
-    # load one group of values from arg
-    # offset of one group
-    # !!! important: assume nreg = 8 and sew = 32
-    # log(8) + log(32/8) = 5
-    slli $T2,$LOOP2,5
-    add  $T3,$T2,$A
-    vlsseg${nreg}e$sew.v $AV, ($T3), $STRIDE
-    add  $T3,$T2,$AB
-    vlsseg${nreg}e$sew.v $ABV, ($T3), $STRIDE
-___
-
-    for (my $j = 0; $j != $nreg; $j++) {
-        my $ABVJ = "v@{[$ABVN + $j]}";
-        my $AVJ = "v@{[$AVN + $j]}";
-        $code .= <<___;
-        vmacc.vx $ABVJ, $T0, $AVJ
-___
-    }
-
-    $code .= <<___;
-    # store one group of AB
-    vssseg${nreg}e$sew.v $ABV, ($T3), $STRIDE
-
-    addi $LOOP2,$LOOP2,1
-    # reuse T0 for special treatment
-    li  $T2,@{[$ngroup - 1]}
-    bne $LOOP2,$T2,2b
-___
-}
-# special treatment on last group
-$code .= <<___;
-    # load last group of values from arg
-    # offset of last group
-    # !!! important: assume nreg = 8 and sew = 32
-    # log(8) + log(32/8) = 5
-    # LOOP2 is now ngroup - 1
-    slli $T2,$LOOP2,5
-    add  $T3,$T2,$A
-    vlsseg${lastgroup}e$sew.v $AV, ($T3), $STRIDE
-    add  $T3,$T2,$AB
-    vlsseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
-___
-
-for (my $j = 0; $j != $lastgroup; $j++) {
-    my $ABVJ = "v@{[$ABVN + $j]}";
-    my $AVJ = "v@{[$AVN + $j]}";
-    $code .= <<___;
-    vmacc.vx $ABVJ, $T0, $AVJ
-___
-}
-
-$code .= <<___;
-    # store last group of AB
-    vssseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
-___
-
-## NOT TRUE: propagate carry for nreg round
-# fully propagte
-propagate_niter();
-
-# AB = q*P + AB
-$code .= <<___;
-    # !!!!!! important: lw here assumes SEW = 32
-    # T0 is used in vmacc, do not use for temp now!
-    lw      $T0, 0($AB)
-    mul     $T0, $T0, $MU
-    # mod 2 ** $word
-    # !!!! important: here we assume SEW = 32 and XLEN = 64
-    sllw    $T0, $T0, $word
-    srlw    $T0, $T0, $word
-
-    # carry for ABV_0
-    vmv.v.i $TV,0 
-    # loop variable
-    li  $LOOP2,0
-___
-
-# start loop of ngroup - 1 times
-if ($ngroup != 1) {
-    $code .= <<___;
-2:
-    # load one group of values from arg
-    # offset of one group
-    # !!! important: assume nreg = 8 and sew = 32
-    # log(8) + log(32/8) = 5
-    slli $T2,$LOOP2,5
-    add  $T3,$T2,$P
-    vlsseg${nreg}e$sew.v $PV, ($T3), $STRIDE
-    add  $T3,$T2,$AB
-    vlsseg${nreg}e$sew.v $ABV, ($T3), $STRIDE
-___
-
-    for (my $j = 0; $j != $nreg; $j++) {
-        my $ABVJ = "v@{[$ABVN + $j]}";
-        my $PVJ = "v@{[$PVN + $j]}";
-        $code .= <<___;
-        vmacc.vx $ABVJ, $T0, $PVJ
-___
-    }
-
-$code .= <<___;
-    # store one group of AB
-    vssseg${nreg}e$sew.v $ABV, ($T3), $STRIDE
-
-    addi $LOOP2,$LOOP2,1
-    # reuse T0 for special treatment
-    li  $T2,@{[$ngroup - 1]}
-    bne $LOOP2,$T2,2b
-___
-}
-# special treatment on last group
-$code .= <<___;
-    # load last group of values from arg
-    # offset of last group
-    # !!! important: assume nreg = 8 and sew = 32
-    # log(8) + log(32/8) = 5
-    # LOOP2 is now ngroup - 1
-    slli $T2,$LOOP2,5
-    add  $T3,$T2,$P
-    vlsseg${lastgroup}e$sew.v $PV, ($T3), $STRIDE
-    add  $T3,$T2,$AB
-    vlsseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
-___
-
-for (my $j = 0; $j != $lastgroup; $j++) {
-    my $ABVJ = "v@{[$ABVN + $j]}";
-    my $PVJ = "v@{[$PVN + $j]}";
-    $code .= <<___;
-    vmacc.vx $ABVJ, $T0, $PVJ
-___
-}
-
-$code .= <<___;
-    # store last group of AB
-    vssseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
-___
-
-## NOT TRUE: propagate carry for nreg round
-# fully propagte
-propagate_niter();
-
-$code .= <<___;
-    # update carry of AB_{ntotalreg - 1} to AB_0
-    # since we need to substract AB_0
-    vlsseg1e$sew.v $ABV, ($AB), $STRIDE
-    # AB / word
-    vslide1down.vx $TV, $ABV, zero
-    # do not need vssseg1e now
-    # just store it in TV
-___
-
+sub move {
 # move AB_1 to AB_0, AB_2 to AB_1, ... , AB_0 (in TV now) to AB_{ntotalreg-1}
 $code .= <<___;
     # loop variable
@@ -429,6 +241,142 @@ $code .= <<___;
     addi $T3,$T3,@{[-$sew / 8]}
     vssseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
 ___
+}
+
+# consumes LOOP2, T0, AB, STRIDE from env, use T2, T3 as tmp var
+sub macc {
+    my $V = shift;
+    my $VV = shift;
+    my $VVN = shift;
+    my $ngroupreg = shift;
+    $code .= <<___;
+    # load one group of values from arg
+    # offset of one group
+    # !!! important: assume nreg = 8 and sew = 32
+    # log(8) + log(32/8) = 5
+    slli $T2,$LOOP2,5
+    add  $T3,$T2,$V
+    vlsseg${ngroupreg}e$sew.v $VV, ($T3), $STRIDE
+    add  $T3,$T2,$AB
+    vlsseg${ngroupreg}e$sew.v $ABV, ($T3), $STRIDE
+___
+
+    for (my $j = 0; $j != $ngroupreg; $j++) {
+        my $ABVJ = "v@{[$ABVN + $j]}";
+        my $VVJ = "v@{[$VVN + $j]}";
+        $code .= <<___;
+        vmacc.vx $ABVJ, $T0, $VVJ
+___
+    }
+
+    $code .= <<___;
+    # store one group of AB
+    vssseg${ngroupreg}e$sew.v $ABV, ($T3), $STRIDE
+___
+}
+
+################################################################################
+# function
+################################################################################
+$code .= <<___;
+.text
+.balign 16
+.globl bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement}
+.type bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement},\@function
+# assume VLEN >= $vl, BN = $bn, SEW = $word * 2 = $sew
+# we only support LMUL = 1 for now
+# P, A, B, AB should have $nelement elements
+bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement}:
+    # quite SIMD
+    li  $T0, $way # in case way > 31
+    vsetvli zero, $T0, e$sew, m$lmul, ta, ma
+    # stride
+    li  $STRIDE, @{[$ntotalreg * $sew / 8]}
+___
+
+$code .= <<___;
+    # start loop of niter + 1 times
+    li  $LOOP,0
+1:
+    # AB = B_i*A + AB
+    # !!!!!! important: lw here assumes SEW = 32
+    # T0 is used in vmacc, do not use for temp now!
+    lw  $T0, 0($B)
+    addi $B, $B, 4 # advance B by a SEW
+
+    # carry for ABV_0
+    vmv.v.i $TV,0 
+    # loop variable
+    li  $LOOP2,0
+___
+# start loop of ngroup - 1 times
+if ($ngroup != 1) {
+    $code .= <<___;
+2:
+___
+    macc($A, $AV, $AVN, $nreg);
+
+    $code .= <<___;
+    addi $LOOP2,$LOOP2,1
+    # reuse T0 for special treatment
+    li  $T2,@{[$ngroup - 1]}
+    bne $LOOP2,$T2,2b
+___
+}
+# special treatment on last group
+macc($A, $AV, $AVN, $lastgroup);
+
+## NOT TRUE: propagate carry for nreg round
+# fully propagte
+propagate_niter();
+
+# AB = q*P + AB
+$code .= <<___;
+    # !!!!!! important: lw here assumes SEW = 32
+    # T0 is used in vmacc, do not use for temp now!
+    lw      $T0, 0($AB)
+    mul     $T0, $T0, $MU
+    # mod 2 ** $word
+    # !!!! important: here we assume SEW = 32 and XLEN = 64
+    sllw    $T0, $T0, $word
+    srlw    $T0, $T0, $word
+
+    # loop variable
+    li  $LOOP2,0
+___
+
+# start loop of ngroup - 1 times
+if ($ngroup != 1) {
+    $code .= <<___;
+2:
+___
+    macc($P, $PV, $PVN, $nreg);
+
+$code .= <<___;
+    addi $LOOP2,$LOOP2,1
+    # reuse T0 for special treatment
+    li  $T2,@{[$ngroup - 1]}
+    bne $LOOP2,$T2,2b
+___
+}
+# special treatment on last group
+macc($P, $PV, $PVN, $lastgroup);
+
+## NOT TRUE: propagate carry for nreg round
+# fully propagte
+propagate_niter();
+
+$code .= <<___;
+    # update carry of AB_{ntotalreg - 1} to AB_0
+    # since we need to substract AB_0
+    vlsseg1e$sew.v $ABV, ($AB), $STRIDE
+    # AB / word
+    vslide1down.vx $TV, $ABV, zero
+    # do not need vssseg1e now
+    # just store it in TV for move
+___
+
+move();
 
 # outer loop
 $code .= <<___;
