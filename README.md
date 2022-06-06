@@ -16,6 +16,10 @@ You can see all the parameters in `mmm.pl`. We use perlasm here for more paramet
 
 `mmm_mem.pl` is a version capable of bigger BN with limited VLEN (e.g. RSA4096 with VLEN=128). During computation it saves/restores BN to/from the variable, The efficiency could be problem if the cache is not big enough, but the code size is pretty good now.
 
+## demo
+
+One demo of this repo is in <https://github.com/openssl/openssl/pull/18479>
+
 ## usage
 
 To run the RVV program, you can try
@@ -52,3 +56,4 @@ And the reference for it
 python mmm4096.py
 # or make ref4096
 ```
+
