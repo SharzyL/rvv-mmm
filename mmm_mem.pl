@@ -97,9 +97,7 @@ ___
     # save carry in TV
     vsrl.vi $TV, $ABVJ, $word
     # mod 2 ** $word
-    # !!!!! important: here we assume elen = 2 * word
-    vsll.vi $ABVJ, $ABVJ, $word
-    vsrl.vi $ABVJ, $ABVJ, $word
+    vand.vv $ABVJ, $ABVJ, $TV2
 ___
     if ($j != $ngroupreg - 1) {
         $code .= <<___;
@@ -116,8 +114,15 @@ $code .= <<___;
     # use T2 as outer loop index
     li  $T2,0
 9:
+    # mask
+    # set TV2 for every propagate()
+    # set TV2 every time (see slide1up below)
+    li  $T0,@{[2 ** $word - 1]}
+    vmv.v.x $TV2,$T0
+
     # carry for ABV_0
     vmv.v.i $TV,0
+
     # loop variable
     li  $LOOP2,0
 ___
