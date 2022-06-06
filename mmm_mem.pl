@@ -108,6 +108,84 @@ ___
     }
 }
 
+sub propagate_niter {
+# propagate carry for the whole bn
+# in total ntotalreg*way times
+$code .= <<___;
+    # start loop of niter + 1 times
+    # use T2 as outer loop index
+    li  $T2,0
+9:
+    # carry for ABV_0
+    vmv.v.i $TV,0
+    # loop variable
+    li  $LOOP2,0
+___
+# start loop of ngroup - 1 times
+if ($ngroup != 1) {
+    $code .= <<___;
+10:
+    # load one group of values from arg
+    # offset of one group
+    # !!! important: assume nreg = 8 and sew = 32
+    # log(8) + log(32/8) = 5
+    slli $T3,$LOOP2,5
+    add  $T3,$T3,$AB
+    vlsseg${nreg}e$sew.v $ABV, ($T3), $STRIDE
+___
+
+    # propagate carry for nreg round
+    # the carry for $nreg - 1 is propagated to TV
+    # then added in the next group
+    for (my $j = 0; $j != $nreg; $j++) {
+        propagate($j, $nreg);
+    }
+
+$code .= <<___;
+    # store one group of AB
+    vssseg${nreg}e$sew.v $ABV, ($T3), $STRIDE
+
+    addi $LOOP2,$LOOP2,1
+    li  $T0,@{[$ngroup - 1]}
+    bne $LOOP2,$T0,10b
+___
+}
+# special treatment on last group
+$code .= <<___;
+    # load last group of values from arg
+    # offset of last group
+    # !!! important: assume nreg = 8 and sew = 32
+    # log(8) + log(32/8) = 5
+    # LOOP2 is now ngroup - 1
+    slli $T3,$LOOP2,5
+    add  $T3,$T3,$AB
+    vlsseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
+___
+# propagate carry for lastgroup round
+# the carry for $lastgroup - 1 is propagated to TV
+# then added in the next group (now AB_0)
+for (my $j = 0; $j != $lastgroup; $j++) {
+    propagate($j, $lastgroup);
+}
+$code .= <<___;
+    # store last group of AB
+    vssseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
+
+    # update carry of AB_{ntotalreg - 1} to AB_0
+    vlsseg1e$sew.v $ABV, ($AB), $STRIDE
+    vslide1up.vx $TV2, $TV, zero
+    vadd.vv $ABV, $ABV, $TV2
+    vssseg1e$sew.v $ABV, ($AB), $STRIDE
+___
+
+# outer loop
+$code .= <<___;
+    addi  $T2,$T2,1
+    li    $T0,$way
+    bne   $T2,$T0,9b
+___
+}
+
 ################################################################################
 # function
 ################################################################################
@@ -164,13 +242,6 @@ ___
         vmacc.vx $ABVJ, $T0, $AVJ
 ___
     }
-    
-    # propagate carry for nreg round
-    # the carry for $nreg - 1 is propagated to TV
-    # then added in the next group
-    for (my $j = 0; $j != $nreg; $j++) {
-        propagate($j, $nreg);
-    }
 
     $code .= <<___;
     # store one group of AB
@@ -204,22 +275,14 @@ for (my $j = 0; $j != $lastgroup; $j++) {
 ___
 }
 
-# propagate carry for lastgroup round
-# the carry for $lastgroup - 1 is propagated to TV
-# then added in the next group (now AB_0)
-for (my $j = 0; $j != $lastgroup; $j++) {
-    propagate($j, $lastgroup);
-}
 $code .= <<___;
     # store last group of AB
     vssseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
-
-    # update carry of AB_{ntotalreg - 1} to AB_0
-    vlsseg1e$sew.v $ABV, ($AB), $STRIDE
-    vslide1up.vx $TV2, $TV, zero
-    vadd.vv $ABV, $ABV, $TV2
-    vssseg1e$sew.v $ABV, ($AB), $STRIDE
 ___
+
+## NOT TRUE: propagate carry for nreg round
+# fully propagte
+propagate_niter();
 
 # AB = q*P + AB
 $code .= <<___;
@@ -259,13 +322,6 @@ ___
         $code .= <<___;
         vmacc.vx $ABVJ, $T0, $PVJ
 ___
-        }
-
-    # propagate carry for nreg round
-    # the carry for $nreg - 1 is propagated to TV
-    # then added in the next group
-    for (my $j = 0; $j != $nreg; $j++) {
-        propagate($j, $nreg);
     }
 
 $code .= <<___;
@@ -300,27 +356,26 @@ for (my $j = 0; $j != $lastgroup; $j++) {
 ___
 }
 
-# propagate carry for lastgroup round
-# the carry for $lastgroup - 1 is propagated to TV
-# then added in the next group (now AB_0)
-for (my $j = 0; $j != $lastgroup; $j++) {
-    propagate($j, $lastgroup);
-}
 $code .= <<___;
     # store last group of AB
     vssseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
+___
 
+## NOT TRUE: propagate carry for nreg round
+# fully propagte
+propagate_niter();
+
+$code .= <<___;
     # update carry of AB_{ntotalreg - 1} to AB_0
     # since we need to substract AB_0
     vlsseg1e$sew.v $ABV, ($AB), $STRIDE
     # AB / word
-    vslide1down.vx $TV2, $ABV, zero
-    vadd.vv        $TV2, $TV2, $TV
+    vslide1down.vx $TV, $ABV, zero
     # do not need vssseg1e now
-    # just store it in TV2
+    # just store it in TV
 ___
 
-# move AB_1 to AB_0, AB_2 to AB_1, ... , AB_0 (in TV2 now) to AB_{ntotalreg-1}
+# move AB_1 to AB_0, AB_2 to AB_1, ... , AB_0 (in TV now) to AB_{ntotalreg-1}
 $code .= <<___;
     # loop variable
     li  $LOOP2,0
@@ -368,7 +423,7 @@ ___
 
 $code .= <<___;
     # move AB_0 to AB_{ntotalreg-1}
-    vmv.v.v v@{[$ABVN + $lastgroup - 1]}, $TV2
+    vmv.v.v v@{[$ABVN + $lastgroup - 1]}, $TV
 
     # back to original offset
     addi $T3,$T3,@{[-$sew / 8]}
@@ -379,82 +434,6 @@ ___
 $code .= <<___;
     addi  $LOOP,$LOOP,1
     li    $T0,@{[$niter + 1]}
-    bne   $LOOP,$T0,1b
-___
-
-# propagate carry for the whole bn
-# in total ntotalreg*way times
-$code .= <<___;
-    # start loop of niter + 1 times
-    li  $LOOP,0
-1:
-    # carry for ABV_0
-    vmv.v.i $TV,0 
-    # loop variable
-    li  $LOOP2,0
-___
-# start loop of ngroup - 1 times
-if ($ngroup != 1) {
-    $code .= <<___;
-2:
-    # load one group of values from arg
-    # offset of one group
-    # !!! important: assume nreg = 8 and sew = 32
-    # log(8) + log(32/8) = 5
-    slli $T2,$LOOP2,5
-    add  $T3,$T2,$AB
-    vlsseg${nreg}e$sew.v $ABV, ($T3), $STRIDE
-___
-
-    # propagate carry for nreg round
-    # the carry for $nreg - 1 is propagated to TV
-    # then added in the next group
-    for (my $j = 0; $j != $nreg; $j++) {
-        propagate($j, $nreg);
-    }
-
-$code .= <<___;
-    # store one group of AB
-    vssseg${nreg}e$sew.v $ABV, ($T3), $STRIDE
-
-    addi $LOOP2,$LOOP2,1
-    # reuse T0 for special treatment
-    li  $T2,@{[$ngroup - 1]}
-    bne $LOOP2,$T2,2b
-___
-}
-# special treatment on last group
-$code .= <<___;
-    # load last group of values from arg
-    # offset of last group
-    # !!! important: assume nreg = 8 and sew = 32
-    # log(8) + log(32/8) = 5
-    # LOOP2 is now ngroup - 1
-    slli $T2,$LOOP2,5
-    add  $T3,$T2,$AB
-    vlsseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
-___
-# propagate carry for lastgroup round
-# the carry for $lastgroup - 1 is propagated to TV
-# then added in the next group (now AB_0)
-for (my $j = 0; $j != $lastgroup; $j++) {
-    propagate($j, $lastgroup);
-}
-$code .= <<___;
-    # store last group of AB
-    vssseg${lastgroup}e$sew.v $ABV, ($T3), $STRIDE
-
-    # update carry of AB_{ntotalreg - 1} to AB_0
-    vlsseg1e$sew.v $ABV, ($AB), $STRIDE
-    vslide1up.vx $TV2, $TV, zero
-    vadd.vv $ABV, $ABV, $TV2
-    vssseg1e$sew.v $ABV, ($AB), $STRIDE
-___
-
-# outer loop
-$code .= <<___;
-    addi  $LOOP,$LOOP,1
-    li    $T0,$way
     bne   $LOOP,$T0,1b
 
     ret
