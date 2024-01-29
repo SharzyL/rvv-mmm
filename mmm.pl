@@ -2,14 +2,15 @@
 use POSIX;
 use warnings;
 
-# $output is the last argument if it looks like a file (it has an extension)
-# $flavour is the first argument if it doesn't look like a file
-$output = $#ARGV >= 0 && $ARGV[$#ARGV] =~ m|\.\w+$| ? pop : undef;
-#$flavour = $#ARGV >= 0 && $ARGV[0] !~ m|\.| ? shift : undef;
-
-$output and open STDOUT,">$output";
+use Getopt::Long;
 
 my $code = "";
+my $scratchpad;
+my $scratchpad_base = 0x1000000;
+
+GetOptions ("scratchpad" => \$scratchpad,
+            "base=i" => \$scratchpad_base)
+or die("error on parsing args");
 
 ################################################################################
 # Constants
@@ -51,7 +52,7 @@ my $nelement = $nreg * $way; # number of elements should be in A, B, P and AB
 # Register assignment
 ################################################################################
 
-my ($AB, $A, $B, $P, $MU) = ("a0", "a1", "a2", "a3", "a4");
+my ($AB, $A, $B, $P, $MU, $BASE) = ("a0", "a1", "a2", "a3", "a4", "a5");
 
 my ($T0) = ("t0"); # happy that it is caller-saved
 
@@ -66,6 +67,36 @@ my $TV2 = "v31";
 # utility
 ################################################################################
 
+sub slide1up {
+    my $vd = shift;
+    my $vs = shift;
+    if (!$scratchpad) {
+        $code .= <<___;
+        vslide1up.vx $vd, $vs, zero
+___
+    } else {
+        $code .= <<___;
+        vse32.v $vs, 4($BASE)
+        vle32.v $vd, 0($BASE)
+___
+    }
+}
+
+sub slide1down {
+    my $vd = shift;
+    my $vs = shift;
+    if (!$scratchpad) {
+        $code .= <<___;
+        vslide1down.vx $vd, $vs, zero
+___
+    } else {
+        $code .= <<___;
+        vse32.v $vs, 4($BASE)
+        vle32.v $vd, 8($BASE)
+___
+    }
+}
+
 sub propagate {
     my $i = shift;
     my $j = shift;
@@ -74,29 +105,33 @@ sub propagate {
     my $ij1 = ($i + $j + 1) % $nreg;
     my $ABVIJ = "v@{[$ABVN + $ij]}";
     my $ABVIJ1 = "v@{[$ABVN + $ij1]}";
+    # !!!!! important: here we assume elen = 2 * word
     $code .= <<___;
+
+    # propagate $i $j $f
+
     # save carry in TV
     vsrl.vi $TV, $ABVIJ, $word
     # mod 2 ** $word
-    # !!!!! important: here we assume elen = 2 * word
     vsll.vi $ABVIJ, $ABVIJ, $word
     vsrl.vi $ABVIJ, $ABVIJ, $word
 ___
     if ($j == $nreg - 1) {
     # carry of AB_s-1 does not add to AB_0
         if ($f == 1) {
+            # for final propagate of an \$i round
+            # instead of slide1up, add then slide1down
+            # we can just slide1down and add
+            # generally slide is expensive
+            slide1down($TV2, $ABVIJ1);
             $code .= <<___;
-    # for final propagate of an \$i round
-    # instead of slide1up, add then slide1down
-    # we can just slide1down and add
-    # generally slide is expensive
     vslide1down.vx $TV2, $ABVIJ1, zero
     vadd.vv        $TV2, $TV2, $TV
     vmv.v.v        $ABVIJ1, $TV2
 ___
         } else {
+            slide1up($TV2, $TV);
             $code .= <<___;
-    vslide1up.vx $TV2, $TV, zero
     vadd.vv $ABVIJ1, $ABVIJ1, $TV2
 ___
         }
@@ -128,18 +163,32 @@ bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement}:
     vlseg${nreg}e$sew.v $AV, ($A)
 ___
 
-    # set ABV to 0
+if ($scratchpad) {
+    $code .= <<___;
+    li $BASE $scratchpad_base
+___
+}
+
 for (my $j = 0; $j != $nreg; $j++) {
     my $ABVJ = "v@{[$ABVN + $j]}";
     $code .= <<___;
+
+    # ---------------------
+    # iter j=$j
+
+    # set ABV to 0
     vmv.v.i            $ABVJ, 0
 ___
 }
 
 for (my $i = 0; $i <= $niter; $i++) {
-    # AB = B_i*A + AB
-    $code .= <<___;
     # !!!!!! important: lw here assumes SEW = 32
+    $code .= <<___;
+
+    # ---------------------
+    # iter i=$i
+
+    # AB = B_i*A + AB
     lw $T0, @{[$i * 4]}($B)
 ___
     for (my $j = 0; $j != $nreg; $j++) {
@@ -156,14 +205,15 @@ ___
         propagate($i, $j, 0);
     }
 
-    # AB = q*P + AB
     my $is = $i % $nreg;
     my $ABVI = "v@{[$ABVN + $is]}";
+    # !!!! important: here we assume SEW = 32 and XLEN = 64
     $code .= <<___;
+
+    # AB = q*P + AB
     vmv.x.s $T0, $ABVI
     mul     $T0, $T0, $MU
-    # mod 2 ** $word
-    # !!!! important: here we assume SEW = 32 and XLEN = 64
+    # mod 2^$word
     sllw    $T0, $T0, $word
     srlw    $T0, $T0, $word
 ___
@@ -190,14 +240,15 @@ for (my $k = $niter + 1; $k <= 2 * $niter + 1; $k++) {
     propagate($i, $j, 0);
 }
 
-# restore order of AB: move AB[i] to A[0]
-# AB[i+1] to A[1], etc..
 my $is = ($niter+1) % $nreg;
 for (my $j = 0; $j != $nreg; $j++) {
     my $AVJ = "v@{[$AVN + $j]}";
     my $ji = ($j + $is) % $nreg;
     my $ABVJI = "v@{[$ABVN + $ji]}";
     $code .= <<___;
+
+    # restore order of AB: move AB[i] to A[0]
+    # AB[i+1] to A[1], etc..
     vmv.v.v $AVJ, $ABVJI
 ___
 }
@@ -208,4 +259,3 @@ $code .= <<___;
 ___
 
 print $code;
-close STDOUT or die "error closing STDOUT: $!";
