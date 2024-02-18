@@ -1,6 +1,6 @@
-#include <math.h>
-#include <stdint.h>
 #include <stdio.h>
+
+#define uint32_t unsigned int
 
 const int N = 1000;
 const int REPEAT = 100;

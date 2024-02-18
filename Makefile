@@ -1,30 +1,27 @@
-.PHONY: all
-all: mmm
-
-mmm.S: mmm_loop.pl
+build/mmm4096.S: mmm_mem.pl
 	perl $^ > $@
 
-mmm4096.S: mmm_mem.pl
-	perl $^ > $@
+build/mmm4096_scratch.S: mmm_mem.pl
+	perl $^ --scratch > $@
 
-mmm: mmm.S mmm_main.c
-	clang --target=riscv64 -march=rv64gcv -static -o $@ $^
+build/mmm4096.elf: build/mmm4096.S mmm_main4096.c
+	riscv32-none-elf-cc -march=rv32gcv -static -o $@ $^
 
-mmm4096: mmm4096.S mmm_main4096.c
-	clang --target=riscv64 -march=rv64gcv -static -o $@ $^
-
-.PHONY: run
-run: mmm
-	./spike --isa=rv64gcv --varch=vlen:128,elen:32 pk mmm
+build/mmm4096_scratch.elf: build/mmm4096_scratch.S mmm_main4096.c
+	riscv32-none-elf-cc -DSCRATCHPAD -march=rv32gcv -static -o $@ $^
 
 .PHONY: run4096
-run4096: mmm4096
-	./spike --isa=rv64gcv --varch=vlen:128,elen:32 pk mmm4096
+run4096: build/mmm4096.elf
+	spike --isa=rv32gcv --varch=vlen:2048,elen:32 build/pk32 $^
+
+.PHONY: run4096_scratch
+run4096_scratch: build/mmm4096_scratch.elf
+	spike --isa=rv32gcv --varch=vlen:2048,elen:32 build/pk32 $^
 
 .PHONY: ref
 ref: mmm.py
 	python $^
 
-.PHONY: ref
+.PHONY: ref4096
 ref4096: mmm4096.py
 	python $^

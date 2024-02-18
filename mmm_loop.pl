@@ -15,13 +15,13 @@ my $code = "";
 # Constants
 ################################################################################
 
-my $xl = 64; # XLEN
-my $vl = 128; # VLEN should be at least $vl
+my $xl = 32; # XLEN
+my $vl = 2048; # VLEN should be at least $vl
 my $el = 32; # ELEN should be at least $el
 # we only support LMUL = 1
 my $lmul = 1;
 
-my $bn = 256; # bits of Big Number
+my $bn = 4096; # bits of Big Number
 my $word = 16; # number of bits in one SEW
 my $R = $bn + $word; # log(montgomery radix R). 
 # e.g. when bn = 256, word = 16, then R = log(2 ** (256 + 16)) = 272
@@ -73,22 +73,22 @@ sub propagate {
     my $ABVJ = "v@{[$ABVN + $j]}";
     my $ABVJ1 = "v@{[$ABVN + $j1]}";
     $code .= <<___;
-    # save carry in TV
-    vsrl.vi $TV, $ABVJ, $word
-    # mod 2 ** $word
-    # TV2 the mask until after j == nreg - 1
-    vand.vv $ABVJ, $ABVJ, $TV2
+        # save carry in TV
+        vsrl.vi $TV, $ABVJ, $word
+        # mod 2 ** $word
+        # TV2 the mask until after j == nreg - 1
+        vand.vv $ABVJ, $ABVJ, $TV2
 ___
     if ($j == $nreg - 1) {
     # carry of AB_s-1 does not add to AB_0
         $code .= <<___;
-    # changed TV2 here! re-init TV2 when the loop start again
-    vslide1up.vx $TV2, $TV, zero
-    vadd.vv $ABVJ1, $ABVJ1, $TV2
+            # changed TV2 here! re-init TV2 when the loop start again
+            vslide1up.vx $TV2, $TV, zero
+            vadd.vv $ABVJ1, $ABVJ1, $TV2
 ___
     } else {
         $code .= <<___;
-    vadd.vv $ABVJ1, $ABVJ1, $TV
+            vadd.vv $ABVJ1, $ABVJ1, $TV
 ___
     }
 }
@@ -96,8 +96,8 @@ ___
 sub move {
     $code .= <<___;
     vslide1down.vx $TV2, $ABV, zero
+    # move AB_1 to AB_0, AB_0 (now AB_s in TV2) to AB_s-1
 ___
-# move AB_1 to AB_0, AB_0 (now AB_s in TV2) to AB_s-1
     for (my $k = 0; $k != $nreg - 1; $k++) {
         my $ABVK = "v@{[$ABVN + $k]}";
         my $ABVK1 = "v@{[$ABVN + $k + 1]}";
@@ -114,24 +114,24 @@ ___
 sub propagate_niter {
 # propagate carry for nreg*way (bigger than niter) round
 # original algorithm propagates for niter round
-$code .= <<___;
-    # start loop of niter + 1 times
-    li  $LOOP2,0
-10:
-    # mask
-    # T0 reused at the end
-    # set TV2 for every loop
-    li  $T0,@{[2 ** $word - 1]}
-    vmv.v.x $TV2,$T0
+    $code .= <<___;
+        # start loop of niter + 1 times
+        li  $LOOP2,0
+    10:
+        # mask
+        # T0 reused at the end
+        # set TV2 for every loop
+        li  $T0,@{[2 ** $word - 1]}
+        vmv.v.x $TV2,$T0
 ___
-# propagate carry for nreg round
-for (my $j = 0; $j != $nreg; $j++) {
-    propagate($j);
-}
-$code .= <<___;
-    addi  $LOOP2,$LOOP2,1
-    li    $T0,$way
-    bne   $LOOP2,$T0,10b
+    # propagate carry for nreg round
+    for (my $j = 0; $j != $nreg; $j++) {
+        propagate($j);
+    }
+    $code .= <<___;
+        addi  $LOOP2,$LOOP2,1
+        li    $T0,$way
+        bne   $LOOP2,$T0,10b
 ___
 }
 
@@ -141,12 +141,12 @@ ___
 $code .= <<___;
 .text
 .balign 16
-.globl bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement}
-.type bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement},\@function
+.globl mmm
+.type mmm,\@function
 # assume VLEN >= $vl, BN = $bn, SEW = $word * 2 = $sew
 # we only support LMUL = 1 for now
 # P, A, B, AB should have $nelement elements
-bn_mul_mont_rv${xl}imv_zvl${vl}b_sew${el}_bn${bn}_nelement${nelement}:
+mmm:
     # quite SIMD
     li  $T0, $way # in case way > 31
     vsetvli zero, $T0, e$sew, m$lmul, ta, ma
@@ -190,14 +190,14 @@ ___
 # fully propagte
 propagate_niter();
 
-# AB = q*P + AB
 $code .= <<___;
+    # AB = q*P + AB
     vmv.x.s $T0, $ABV
     mul     $T0, $T0, $MU
     # mod 2 ** $word
     # !!!! important: here we assume SEW = 32 and XLEN = 64
-    sllw    $T0, $T0, $word
-    srlw    $T0, $T0, $word
+    sll    $T0, $T0, $word
+    srl    $T0, $T0, $word
 ___
 for (my $j = 0; $j != $nreg; $j++) {
     my $ABVJ = "v@{[$ABVN + $j]}";
@@ -205,7 +205,7 @@ for (my $j = 0; $j != $nreg; $j++) {
     $code .= <<___;
     vmacc.vx $ABVJ, $T0, $PVJ
 ___
-    }
+}
 
 ## NOT TRUE: propagate carry for nreg round
 #for (my $j = 0; $j != $nreg - 1; $j++) {
