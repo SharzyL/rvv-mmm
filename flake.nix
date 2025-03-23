@@ -9,7 +9,7 @@
       (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          pythonEnv = pkgs.python3.withPackages (ps: with ps; [ colorama ]);
+          pythonEnv = pkgs.python3.withPackages (ps: with ps; [ colorama numpy ipython ]);
         in
         {
           legacyPackages = pkgs;
@@ -18,7 +18,6 @@
               spike
               dtc
               pkgs.pkgsCross.riscv32-embedded.stdenv.cc
-              pkgs.pkgsCross.riscv64-embedded.stdenv.cc
 
               pythonEnv
             ];
