@@ -16,12 +16,12 @@ my $code = "";
 ################################################################################
 
 my $xl = 32; # XLEN
-my $vl = 2048; # VLEN should be at least $vl
+my $vl = 128; # VLEN should be at least $vl
 my $el = 32; # ELEN should be at least $el
 # we only support LMUL = 1
 my $lmul = 1;
 
-my $bn = 4096; # bits of Big Number
+my $bn = 256; # bits of Big Number
 my $word = 16; # number of bits in one SEW
 my $R = $bn + $word; # log(montgomery radix R). 
 # e.g. when bn = 256, word = 16, then R = log(2 ** (256 + 16)) = 272
@@ -34,7 +34,7 @@ if ($sew > $el) {
 
 my $way = $vl / $sew; # simd way
 my $niter = $bn / $word; # number of iterations
-my $ntotalreg = $niter / $way + 1; # number of vreg for one bn
+my $ntotalreg = POSIX::ceil($niter / $way) + 1; # number of vreg for one bn
 my $nreg = $ntotalreg;
 my $nelement = $ntotalreg * $way; # number of elements should be in A, B, P and AB
 # e.g, when BN = 4096, VLEN = 128 and SEW = 32
