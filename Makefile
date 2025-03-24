@@ -1,5 +1,5 @@
-build/mmm_neo: mmm_neo.c
-	riscv32-none-elf-cc -O2 -march=rv32gcv $^ -o $@
+build/mmm_neo: mmm.h mmm_4096_main.c
+	riscv32-none-elf-cc -O2 -march=rv32gcv mmm_4096_main.c -o $@
 	riscv32-none-elf-objdump -d $@ > build/mmm_neo.objdump
 
 .PHONY: run_mmm_neo

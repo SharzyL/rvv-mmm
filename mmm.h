@@ -1,3 +1,5 @@
+#pragma once
+
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -91,12 +93,3 @@ void mmm(const uint32_t *X, const uint32_t *Y, const uint32_t *M, int32_t n,
   asm volatile("vse32.v v24, 0(%0)" : : "r"(Z));
 }
 
-int main() {
-  uint32_t X[] = {0xb13e, 0x117a, 0x2de9, 0x3bd1};
-  uint32_t Y[] = {0x383a, 0x338e, 0x3f19, 0xa39b};
-  uint32_t M[] = {0xc125, 0x7b23, 0xe38a, 0x13a3};
-  uint32_t Z[4];
-
-  mmm(X, Y, M, 4, 0x47f5, Z);
-  print_array(Z, 4);
-}

@@ -9,7 +9,7 @@
       (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          pythonEnv = pkgs.python3.withPackages (ps: with ps; [ colorama numpy ipython ]);
+          pythonEnv = pkgs.python3.withPackages (ps: with ps; [ numpy ipython loguru ]);
         in
         {
           legacyPackages = pkgs;
@@ -24,6 +24,7 @@
             env = {
               PK = "${pkgs.pkgsCross.riscv32-embedded.riscv-pk}/bin/pk";
             };
+            hardeningDisable = [ "relro" "bindnow" ];
           };
         }
       )
